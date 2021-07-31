@@ -1,8 +1,10 @@
-import { Arg, Ctx, Field, InputType, Mutation, ObjectType, Resolver } from "type-graphql";
+import { Arg, Ctx, Field, InputType, Mutation, ObjectType, Query, Resolver } from "type-graphql";
 import argon2 from "argon2"
 
 import { MyContext } from "src/types";
 import { User } from "../entities/User";
+import { COOKIE_NAME } from "../constants";
+// import { EntityManager } from "@mikro-orm/postgresql";
 
 @InputType()
 class UsernamePasswordInput {
@@ -32,11 +34,23 @@ class UserResponse {
 
 @Resolver()
 export class UserResolver {
+  @Query(() => User, { nullable: true })
+  async me(
+    @Ctx() { req, em }: MyContext
+  ) {
+    // you are not logged in
+    if (!req.session.userId) {
+      return null
+    }
+    const user = await em.findOne(User, { id: req.session.userId })
+    return user
+  }
+
   @Mutation(() => UserResponse)
   async register(
     @Arg('options') options: UsernamePasswordInput,
     @Ctx() { em }: MyContext
-  ): Promise<UserResponse> {
+  ): Promise<UserResponse | undefined> {
     // Вот все эти валидации можно выносить в отдельные декораторы или попробовать обрабатывать с помощью MIDDLEWARE
 
     if (options.username.length <= 2) {
@@ -58,12 +72,31 @@ export class UserResolver {
     }
 
     const hashedPassword = await argon2.hash(options.password)
-    const user = em.create(User, {
-      username: options.username,
-      password: hashedPassword
-    })
+
+    let user;
     try {
-      await em.persistAndFlush(user)
+      // 
+      const _user = em.create(User, {
+        username: options.username,
+        password: hashedPassword
+      })
+      await em.persistAndFlush(_user)
+
+      user = await em.findOne(User, {
+        username: options.username
+      }) || undefined
+      // const result = await (em as EntityManager)
+      //   .createQueryBuilder(User)
+      //   .getKnexQuery()
+      //   .insert({
+      //     username: options.username,
+      //     password: hashedPassword,
+      //     created_at: new Date(),
+      //     updated_at: new Date(),
+      //   })
+      //   .returning("*");
+      // user = await result[0];
+
     } catch (error) {
       if (error.code === '23505') {
         return {
@@ -106,8 +139,25 @@ export class UserResolver {
       }
     }
 
+    // Установить куки у юзера. Сделает его залогиненным
     req.session.userId = user.id
 
     return { user }
+  }
+
+  @Mutation(() => Boolean)
+  logout(
+    @Ctx() { req, res }: MyContext
+  ) {
+    // req.session.destroy - метод берётся из библиотеки "express-session"
+    return new Promise(resolve => req.session.destroy((err: any) => {
+      res.clearCookie(COOKIE_NAME)
+      if (err) {
+        console.log("Logout_Err: ", err)
+        resolve(false)
+        return
+      }
+      resolve(true)
+    }))
   }
 }

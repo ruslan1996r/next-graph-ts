@@ -6,10 +6,11 @@ import { buildSchema } from "type-graphql";
 import redis from "redis"
 import session from "express-session"
 import connectRedis from "connect-redis"
+import cors from "cors"
 
 import { HelloResolver } from './resolvers/hello';
 import { PostResolver } from './resolvers/post';
-import { __prod__ } from './constants';
+import { COOKIE_NAME, __prod__ } from './constants';
 import microConfig from './mikro-orm.config';
 import { MyContext } from './types';
 import { UserResolver } from './resolvers/user';
@@ -28,10 +29,14 @@ const main = async () => {
     port: 6379
   })
 
+  app.use(cors({
+    origin: "http://localhost:3000",
+    credentials: true
+  }))
   // Это должно быть раньше, чем подключение Аполло, потому что мы будем юзать Редис внутри Аполло
   app.use(
     session({
-      name: "qid",
+      name: COOKIE_NAME,//"qid",
       store: new RedisStore({
         client: redisClient,
         disableTouch: true
@@ -61,7 +66,7 @@ const main = async () => {
     context: ({ req, res }): MyContext => ({ em: orm.em, req, res })
   })
 
-  apolloServer.applyMiddleware({ app })
+  apolloServer.applyMiddleware({ app, cors: false })
 
   app.listen(PORT, () => {
     console.log(`Server on: http://localhost:${PORT}`)
